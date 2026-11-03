@@ -348,17 +348,18 @@ def _reset_cable_history(
             world = -1
         if _reset_selected_world(world, world_mask, world_count, reset_all):
             rebaseline_mask[index] = True
+    if index < joint_world.shape[0]:
+        if _reset_selected_world(joint_world[index], world_mask, world_count, reset_all):
+            # Newton rods include joint rows that do not carry cable state; clear the full selected-world slice.
+            sigma_prev[index] = wp.vec3(0.0)
+            kappa_prev[index] = wp.vec3(0.0)
+            dkappa_prev[index] = wp.vec3(0.0)
+            sigma_start[index] = wp.vec3(0.0)
+            friction_hessian[index] = wp.vec3(0.0)
     if index < cable_joints.shape[0]:
         joint = cable_joints[index]
         selected = _reset_selected_world(joint_world[joint], world_mask, world_count, reset_all)
         penalty_reset_mask[index] = wp.int32(selected)
-        if selected:
-            # Curvature is sampled again from the next input pose, after reset-time FK or edits.
-            sigma_prev[joint] = wp.vec3(0.0)
-            kappa_prev[joint] = wp.vec3(0.0)
-            dkappa_prev[joint] = wp.vec3(0.0)
-            sigma_start[joint] = wp.vec3(0.0)
-            friction_hessian[joint] = wp.vec3(0.0)
 
 
 @wp.kernel
@@ -1787,7 +1788,7 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
         """Preserve Newton's four cable material slots and DER rest invariants."""
         model = self.model
         joint_types = model.joint_type.numpy()
-        joints = np.flatnonzero(joint_types == int(_newton.JointType.CABLE)).astype(np.int32)
+        joints = np.flatnonzero(joint_types == int(_newton.JointType.ROD)).astype(np.int32)
         self._cable_count = len(joints)
         self._cable_joints = wp.array(joints, dtype=wp.int32, device=self.device)
         if not self._cable_count:
@@ -2254,7 +2255,7 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
             if not bool(joint_enabled[joint]):
                 continue
 
-            if int(joint_types[joint]) == int(_newton.JointType.CABLE):
+            if int(joint_types[joint]) == int(_newton.JointType.ROD):
                 continue
 
             parent_body = int(joint_parents[joint])
@@ -3209,7 +3210,7 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
         stiffness = self.model.joint_target_ke.numpy()
         damping = self.model.joint_target_kd.numpy()
         for joint, (joint_type, start, dims) in enumerate(zip(types, starts, dimensions)):
-            if not enabled[joint] or int(joint_type) in (int(_newton.JointType.FREE), int(_newton.JointType.CABLE)):
+            if not enabled[joint] or int(joint_type) in (int(_newton.JointType.FREE), int(_newton.JointType.ROD)):
                 continue
             if int(joint_type) == int(_newton.JointType.D6) and tuple(dims) == (3, 3):
                 continue
@@ -4044,7 +4045,7 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
         if self._cable_count:
             wp.launch(
                 _reset_cable_history,
-                dim=max(self._cable_count, int(model.world_count) + 1),
+                dim=max(self._cable_count, int(model.joint_count), int(model.world_count) + 1),
                 inputs=[world_mask, world_mask is None, int(model.world_count), self._cable_joints, model.joint_world],
                 outputs=[self._cable_rebaseline_mask, self.joint_sigma_prev, self.joint_kappa_prev,
                          self._joint_dkappa_prev, self._joint_sigma_start, self._joint_C_fric,

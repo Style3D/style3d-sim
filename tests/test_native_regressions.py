@@ -63,9 +63,9 @@ def test_zero_iterations_returns_inertial_prediction(
 @pytest.mark.parametrize("world_count", (1, 3))
 def test_replicated_particles_contact_global_ground(world_count: int) -> None:
     newton = pytest.importorskip("newton")
-    scene = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+    scene = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0))
     scene.add_particle(pos=(0.0, 0.0, 0.05), vel=(0.0, 0.0, 0.0), mass=1.0, radius=0.1)
-    builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+    builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0))
     builder.replicate(scene, world_count)
     builder.add_ground_plane()
     model = builder.finalize(device="cuda:0")

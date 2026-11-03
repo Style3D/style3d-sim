@@ -1158,14 +1158,15 @@ def test_newton_solver_free_fall_matches_symplectic_inertial_prediction(
     world_count: int,
 ) -> None:
     gravity = -9.81
+    gravity_vector = wp.vec3(0.0, 0.0, gravity)
     dt = 1.0 / 120.0
     if world_count == 1:
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=gravity)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=gravity_vector)
         builder.add_particle(pos=(0.0, 0.0, 1.0), vel=(0.0, 0.0, 2.0), mass=1.0)
     else:
-        scene = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=gravity)
+        scene = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=gravity_vector)
         scene.add_particle(pos=(0.0, 0.0, 1.0), vel=(0.0, 0.0, 2.0), mass=1.0)
-        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=gravity)
+        builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=gravity_vector)
         builder.replicate(scene, world_count)
 
     model = builder.finalize(device="cuda:0")
@@ -1308,7 +1309,7 @@ def test_newton_solver_joint_constraint_topology_matrix(
     expected_lines: int,
 ) -> None:
     builder = ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
-    body = builder.add_body(
+    body = builder.add_link(
         mass=2.0,
         inertia=wp.mat33(5.0, 0.0, 0.0, 0.0, 6.0, 0.0, 0.0, 0.0, 7.0),
         lock_inertia=True,
@@ -1317,7 +1318,7 @@ def test_newton_solver_joint_constraint_topology_matrix(
     if joint_kind == "free":
         joint = builder.add_joint_free(child=body)
     elif joint_kind == "fixed":
-        parent = builder.add_body(
+        parent = builder.add_link(
             mass=2.0,
             inertia=wp.mat33(5.0, 0.0, 0.0, 0.0, 6.0, 0.0, 0.0, 0.0, 7.0),
             lock_inertia=True,
@@ -1710,7 +1711,7 @@ def test_replicated_world_joint_constraints_keep_full_layout() -> None:
 def test_newton_solver_regularizes_active_joint_drive_inertia(armature: float) -> None:
     mass = 2.0
     inertia = np.diag((0.02, 0.03, 0.04)).astype(np.float32)
-    builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+    builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0))
     body = builder.add_link(
         mass=mass,
         inertia=wp.mat33(inertia),
@@ -3471,7 +3472,7 @@ def test_newton_solver_shares_replicated_cloth_rigid_model_data(
 ) -> None:
     from newton.solvers import style3d
 
-    scene = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+    scene = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0))
     newton.solvers.SolverStyle3D.register_custom_attributes(scene)
     style3d.add_cloth_grid(
         scene,
@@ -3496,7 +3497,7 @@ def test_newton_solver_shares_replicated_cloth_rigid_model_data(
     )
     scene.add_shape_box(body, hx=0.1, hy=0.1, hz=0.1)
 
-    builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=0.0)
+    builder = newton.ModelBuilder(up_axis=newton.Axis.Z, gravity=wp.vec3(0.0))
     newton.solvers.SolverStyle3D.register_custom_attributes(builder)
     builder.replicate(scene, world_count)
     model = builder.finalize(device="cuda:0")

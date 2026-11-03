@@ -56,10 +56,14 @@ class ModelBuilder(_newton.ModelBuilder):
 
         Args:
             up_axis: Newton model up axis.
-            gravity: Gravitational acceleration along the negative up axis.
+            gravity: Scalar acceleration along the negative up axis, or an explicit world-space vector.
             affine_body_particle_radius: Viewer and collision radius of proxy
                 particles. ``None`` uses Newton's default particle radius.
         """
+        if np.isscalar(gravity):
+            gravity_vector = np.zeros(3, dtype=np.float32)
+            gravity_vector[_newton.Axis.from_any(up_axis).value] = gravity
+            gravity = gravity_vector
         super().__init__(up_axis=up_axis, gravity=gravity)
         # SolverNewton treats contacts implicitly, so use a substantially stiffer penalty than Newton's
         # general-purpose explicit-contact default. Keep damping moderate: excessive damping makes resting

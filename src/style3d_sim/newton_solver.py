@@ -40,6 +40,17 @@ from .cable_material import (
 )
 
 
+@wp.kernel
+def _compute_body_qdd(
+    body_qd_in: wp.array(dtype=wp.spatial_vector),
+    body_qd_out: wp.array(dtype=wp.spatial_vector),
+    inverse_dt: float,
+    body_qdd: wp.array(dtype=wp.spatial_vector),
+):
+    body = wp.tid()
+    body_qdd[body] = inverse_dt * (body_qd_out[body] - body_qd_in[body])
+
+
 def _ensure_style3d_login() -> None:
     """Authenticate the native solver using environment variables or terminal input."""
     if is_logged_in():
@@ -632,6 +643,13 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
     therefore participate in graph capture.
     """
 
+    SUPPORTED_OBSERVABLES = frozenset(
+        {
+            _newton.solvers.SolverBase.ObservableKind.BODY_QDD,
+            _newton.solvers.SolverBase.ObservableKind.CONTACT_F,
+        }
+    )
+
     def __init__(
         self,
         model: Any,
@@ -698,6 +716,7 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
             body_q=wp.empty_like(model.body_q),
             body_qd=wp.empty_like(model.body_qd),
         )
+        self._body_qd_previous = wp.empty_like(model.body_qd)
         self._particle_mass_diagonal: Any | None = getattr(
             model, "synreal_particle_mass_diagonal", None
         )
@@ -4082,17 +4101,28 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
         """Control history remapping for the next substep after collision detection."""
         self._rigid_history_update = bool(enabled)
 
-    def _as_synreal_contact(self, contacts: Any | None) -> Contact:
+    def _as_synreal_contact(self, contacts: Any | None, contact_force: Any | None = None) -> Contact:
         """Wrap Newton rigid- and soft-contact buffers without taking ownership."""
         native_contact = Contact()
         native_contact.history_refresh = getattr(self, "_rigid_history_update", True)
         self._rigid_history_update = True
         if contacts is None:
+            if contact_force is not None:
+                raise ValueError("Newton contact-force observables require Contacts.")
             return native_contact
 
         rigid_capacity = int(contacts.rigid_contact_max)
         if rigid_capacity < 0:
             raise ValueError("Newton rigid contact capacity cannot be negative.")
+        soft_capacity = int(contacts.soft_contact_max)
+        if soft_capacity < 0:
+            raise ValueError("Newton soft contact capacity cannot be negative.")
+        if contact_force is not None:
+            native_contact.contact_force = self._as_span(
+                contact_force,
+                rigid_capacity + soft_capacity,
+                expected_dtype=self._wp.spatial_vector,
+            )
         if rigid_capacity:
             if self.config.rigid_contact_hard:
                 self._reserve_rigid_contact_capacity(rigid_capacity)
@@ -4147,9 +4177,6 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
                 expected_dtype=self._wp.float32,
             )
 
-        soft_capacity = int(contacts.soft_contact_max)
-        if soft_capacity < 0:
-            raise ValueError("Newton soft contact capacity cannot be negative.")
         if soft_capacity:
             native_contact.soft_max_count = soft_capacity
             native_contact.soft_count = self._as_span(
@@ -4260,6 +4287,8 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
         control: Any | None,
         contacts: Any | None,
         dt: float,
+        *,
+        observables: _newton.solvers.SolverBase.Observables | None = None,
     ) -> None:
         """Advance Newton state arrays through the native Style3D Sim solver.
 
@@ -4269,6 +4298,7 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
             control: Newton generalized joint-control input.
             contacts: Newton collision-pipeline contact data.
             dt: Time-step duration in seconds.
+            observables: Optional Newton diagnostic arrays allocated by this solver.
 
         When affine-body inertial prediction is enabled, Python integrates the
         rigid-body inertia state including the applied body wrench, then converts
@@ -4286,6 +4316,13 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
         returned proxy velocities are projected onto the rigid velocity field
         represented by ``state_out.body_qd`` so the two representations round-trip.
         """
+        self.validate_observables(observables, contacts)
+        contact_force = None
+        if observables is not None and observables.is_requested(self.ObservableKind.CONTACT_F):
+            contact_force = observables.contact_f
+            if contact_force.requires_grad:
+                raise NotImplementedError("NewtonSolver contact_f observables do not support gradients.")
+
         if not np.isfinite(dt) or dt <= 0.0:
             raise ValueError("dt must be finite and greater than zero")
 
@@ -4294,16 +4331,18 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
         self._validate_body_state_arrays(state_in)
         self._validate_body_state_arrays(state_out)
         native_control = self._as_synreal_control(control)
-        native_contact = self._as_synreal_contact(contacts)
+        native_contact = self._as_synreal_contact(contacts, contact_force)
         stream = self._wp.get_stream(self.device)
 
         if self.model.body_count:
+            self._wp.copy(self._body_qd_previous, state_in.body_qd, stream=stream)
             self._wp.copy(state_out.body_q, state_in.body_q, stream=stream)
             self._wp.copy(state_out.body_qd, state_in.body_qd, stream=stream)
 
         if not self.model.particle_count:
             if self._joint_drive_effort is not None:
                 self._joint_drive_effort.zero_()
+            self._write_body_qdd(state_out, observables, dt, stream)
             return
 
         if self._cable_count:
@@ -4439,6 +4478,8 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
                 stream=stream,
             )
 
+        self._write_body_qdd(state_out, observables, dt, stream)
+
         if self._cable_count:
             self._update_cable_dahl(state_out)
 
@@ -4454,6 +4495,29 @@ class NewtonSolver(_newton.solvers.SolverBase, CouplingInterface):
                 out=self._joint_drive_feedback_scratch,
                 _advance_angle_state=True,
             )
+
+    def _write_body_qdd(
+        self,
+        state_out: Any,
+        observables: _newton.solvers.SolverBase.Observables | None,
+        dt: float,
+        stream: Any,
+    ) -> None:
+        body_state_count = self._body_qd_previous.shape[0]
+        if (
+            observables is None
+            or not observables.is_requested(self.ObservableKind.BODY_QDD)
+            or not body_state_count
+        ):
+            return
+        self._wp.launch(
+            _compute_body_qdd,
+            dim=body_state_count,
+            inputs=[self._body_qd_previous, state_out.body_qd, 1.0 / dt],
+            outputs=[observables.body_qdd],
+            device=self.device,
+            stream=stream,
+        )
 
     def notify_model_changed(self, flags: Any) -> None:
         """Refresh native views after Newton model arrays are modified.

@@ -366,6 +366,12 @@ class Contact:
     def match_index(self, arg1: Span) -> None:
         ...
     @property
+    def contact_force(self) -> Span:
+        """Optional wrench output, rigid rows followed by soft rows."""
+    @contact_force.setter
+    def contact_force(self, arg1: Span) -> None:
+        ...
+    @property
     def margin0(self) -> Span:
         """
         Device span containing the first shape contact margin.

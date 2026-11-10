@@ -18,7 +18,6 @@ examples = [
     "matplotlib>=3.9",
     "mujoco>=3.3",
     "scipy>=1.14",
-    "torch>=2.7",
 ]
 # Go2/G1 PPO training, checkpoint export, and ONNX Runtime verification.
 locomotion = [
@@ -65,11 +64,6 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cu132" }
 torchvision = { index = "pytorch-cu132" }
-
-[tool.uv]
-# Keep uv's cache inside the repository so managed Windows environments do not
-# depend on permissions of the per-user cache directory.
-cache-dir = ".uvcache"
 
 [tool.scikit-build]
 # Package the public Python sources alongside the compiled `_core` extension.

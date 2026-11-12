@@ -28,16 +28,7 @@ else()
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/synreal-solver/CMakeLists.txt")
         message(FATAL_ERROR "SYNREAL_SOLVER_USE_PREBUILT=OFF, but synreal-solver is not initialized.")
     endif()
-    # Keep the standalone solver's install layout separate from the Python package.
-    add_subdirectory(synreal-solver EXCLUDE_FROM_ALL)
-    add_custom_target(style3d_sim_extension ALL DEPENDS _core)
-    install(TARGETS _core DESTINATION style3d_sim)
-    if(MSVC)
-        install(
-            FILES "$<TARGET_PDB_FILE:_core>"
-            CONFIGURATIONS Debug
-            DESTINATION style3d_sim
-            OPTIONAL
-        )
-    endif()
+    # Select the Python package layout without excluding the native targets from the default build.
+    set(SYNREAL_SOLVER_PYTHON_INSTALL_DIR style3d_sim)
+    add_subdirectory(synreal-solver)
 endif()

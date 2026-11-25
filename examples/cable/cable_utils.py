@@ -39,6 +39,9 @@ CABLE_SOLVER_PROFILES: dict[str, dict[str, CableSolverProfile]] = {
     "example_cable_pile": {
         "synreal": CableSolverProfile(1, 2), "pd": CableSolverProfile(1, 2),
     },
+    "example_cable_coil_tie": {
+        "synreal": CableSolverProfile(2, 5, True, False), "pd": CableSolverProfile(2, 5, True, False),
+    },
     "example_cable_plectoneme": {
         "synreal": CableSolverProfile(2, 5, True), "pd": CableSolverProfile(2, 5, True),
     },
